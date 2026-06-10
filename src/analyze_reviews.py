@@ -2,6 +2,7 @@ import argparse
 import json
 import urllib.parse
 from collections import Counter
+from datetime import datetime, timezone
 from pathlib import Path
 
 import requests
@@ -85,6 +86,19 @@ def detect_lang_code(language: str) -> str:
         "polish": "pl",
     }
     return mapping.get(language.lower(), "auto")
+
+
+def format_timestamp(value: int | None) -> str:
+    """Convert Unix timestamp to DD.MM.YYYY format."""
+    if value in (None, ""):
+        return "—"
+
+    try:
+        dt = datetime.fromtimestamp(int(value), tz=timezone.utc).astimezone()
+    except (TypeError, ValueError, OSError):
+        return "—"
+
+    return dt.strftime("%d.%m.%Y")
 
 
 def translate_text(text: str, source_lang: str = "auto") -> str:
@@ -190,7 +204,8 @@ def build_markdown_report(reviews: list, input_path: Path) -> str:
             "",
             f"- Классификация: {labels}",
             f"- Язык оригинала: {language}",
-            f"- Дата отзыва: {item.get('timestamp_created', '—')}",
+            "- Дата отзыва: "
+            f"{format_timestamp(item.get('timestamp_created'))}",
             (
                 f"- Время в игре на момент отзыва: {playtime_at_review} минут"
                 if playtime_at_review is not None

@@ -1,7 +1,10 @@
 import argparse
 import json
+import urllib.parse
 from collections import Counter
 from pathlib import Path
+
+import requests
 
 
 BUG_KEYWORDS = [
@@ -61,6 +64,45 @@ def classify_review(item: dict) -> list[str]:
         labels.append("Общее впечатление")
 
     return labels
+
+
+def detect_lang_code(language: str) -> str:
+    """Map Steam language names to Google Translate language codes."""
+    mapping = {
+        "english": "en",
+        "russian": "ru",
+        "schinese": "zh-CN",
+        "tchinese": "zh-TW",
+        "korean": "ko",
+        "japanese": "ja",
+        "french": "fr",
+        "german": "de",
+        "spanish": "es",
+        "italian": "it",
+        "portuguese": "pt",
+        "turkish": "tr",
+        "ukrainian": "uk",
+        "polish": "pl",
+    }
+    return mapping.get(language.lower(), "auto")
+
+
+def translate_text(text: str, source_lang: str = "auto") -> str:
+    """Translate text to Russian using a public Google Translate endpoint."""
+    if not text or not text.strip():
+        return ""
+
+    encoded = urllib.parse.quote(text)
+    url = (
+        "https://translate.googleapis.com/translate_a/single?"
+        "client=gtx&sl={source}&tl=ru&dt=t&ie=UTF-8&oe=UTF-8&q={q}"
+    ).format(source=source_lang, q=encoded)
+
+    response = requests.get(url, timeout=60)
+    response.raise_for_status()
+    payload = response.json()
+    translated_parts = payload[0]
+    return "".join(part[0] for part in translated_parts if part and part[0])
 
 
 def make_russian_summary(item: dict) -> str:
@@ -125,18 +167,50 @@ def build_markdown_report(reviews: list, input_path: Path) -> str:
         anchor = f"review-{index}"
         rating = "Позитивный" if item.get("voted_up") else "Негативный"
         labels = ", ".join(classify_review(item))
+        author = item.get("author", {}) or {}
+        playtime_at_review = author.get("playtime_at_review", None)
+        playtime_forever = author.get("playtime_forever", None)
+        language = item.get("language", "") or ""
+        translated_text = ""
+        if detect_lang_code(language) != "ru":
+            translated_text = translate_text(
+                item.get("review", ""),
+                detect_lang_code(language),
+            )
+
+        translation_note = (
+            translated_text
+            if translated_text
+            else "Отзыв уже написан на русском языке, перевод не требуется."
+        )
+
         lines.extend([
             f"<a id=\"{anchor}\"></a>",
             f"### Отзыв {index} — {rating}",
             "",
             f"- Классификация: {labels}",
-            f"- Дата: {item.get('timestamp_created', '—')}",
+            f"- Язык оригинала: {language}",
+            f"- Дата отзыва: {item.get('timestamp_created', '—')}",
+            (
+                f"- Время в игре на момент отзыва: {playtime_at_review} минут"
+                if playtime_at_review is not None
+                else "- Время в игре на момент отзыва: неизвестно"
+            ),
+            (
+                f"- Общее время в игре: {playtime_forever} минут"
+                if playtime_forever is not None
+                else "- Общее время в игре: неизвестно"
+            ),
             "- Полезность: "
             f"{item.get('votes_up', 0)} 👍 / {item.get('votes_funny', 0)} 😄",
             "",
             "**Краткий русский комментарий**",
             "",
             f"{make_russian_summary(item)}",
+            "",
+            "**Перевод на русский**",
+            "",
+            translation_note,
             "",
             "**Оригинальный текст**",
             "",
